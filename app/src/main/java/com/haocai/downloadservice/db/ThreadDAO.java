@@ -19,11 +19,10 @@ public interface ThreadDAO {
     /**
      * 删除线程
      * @param url
-     * @param thread_id
      */
-    public void deleteThread(String url,int thread_id );
+    public void deleteThread(String url);
 
-    public void updateThread(String url,int thread_id ,int finished);
+    public void updateThread(String url,int thread_id ,long finished);
 
     /**
      * 查询文件的线程信息

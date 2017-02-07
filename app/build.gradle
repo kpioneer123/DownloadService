@@ -34,4 +34,5 @@ dependencies {
     compile 'com.jakewharton:butterknife:5.1.1'
     compile 'com.yanzhenjie.alertdialog:alertdialog:1.0.0'
     compile 'com.yanzhenjie:permission:1.0.4'
+    compile 'com.github.bumptech.glide:glide:3.7.0'
 }

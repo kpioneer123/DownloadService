@@ -14,7 +14,11 @@ import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * @author Xionghu
@@ -22,35 +26,66 @@ import java.util.List;
  */
 
 public class DownloadTask {
+    public static final String FINISHED_KEY   = "finished";
+    public static final String ID_KEY         = "id";
     private Context mContext = null;
     private FileInfo mFileInfo = null;
     private ThreadDAOImpl mDao = null;
-    private int mFinished = 0;
     public  boolean  isPause = false;
-    public DownloadTask(Context mContext, FileInfo mFileInfo) {
-        this.mContext = mContext;
-        this.mFileInfo = mFileInfo;
+    private int mFinished = 0;
+    private int mThreadCount = 1; //线程数量
+    private List<DownloadThread> mThreadList =null;//线程集合
+    public  static ExecutorService mExecutorService = Executors.newCachedThreadPool(); //线程池
+
+    public DownloadTask(Context mContext, FileInfo mFileInfo ,int mThreadCount) {
+        this.mContext     = mContext;
+        this.mFileInfo    = mFileInfo;
+        this.mThreadCount = mThreadCount;
         mDao = new ThreadDAOImpl(mContext);
     }
 
     public void download(){
         //读取数据库的线程信息
         List<ThreadInfo> threadInfos = mDao.getThreads(mFileInfo.getUrl());
-        ThreadInfo threadInfo = null;
-        if(threadInfos.size() == 0){
-            //初始化线程信息对象
-            threadInfo = new ThreadInfo(0,mFileInfo.getUrl(),0,mFileInfo.getLength(),0);
-        }else {
-            threadInfo = threadInfos.get(0);
+        if(threadInfos.size() == 0)
+        {
+            //获得每个线程下载的长度
+            int length = mFileInfo.getLength() / mThreadCount;
+            for(int i = 0;i < mThreadCount;i++)
+            {
+                ThreadInfo threadInfo = new ThreadInfo(i,mFileInfo.getUrl(), length * i,( i + 1 ) * length - 1,0 );
+                if(i == mThreadCount - 1){
+                    threadInfo.setEnd(mFileInfo.getLength()); // 对于线程除不尽的情况，100/3 = 33   第3个线程末尾为98 显然不对 ，对于最后一个线程结束位直接设为100
+                }
+                //添加到线程信息集合中去
+                threadInfos.add(threadInfo);
+
+                //向数据库中插入线程信息
+                mDao.insertThread(threadInfo);
+            }
+
+
         }
-        //创建子线程进行下载
-        new DownloadThread(threadInfo).start();
+        mThreadList = new ArrayList<DownloadThread>();
+
+        //启动多个线程进行下载
+        for(ThreadInfo info : threadInfos)
+        {
+            DownloadThread thread = new DownloadThread(info);
+           // thread.start();
+            DownloadTask.mExecutorService.execute(thread); //线程池中去启动线程
+            //添加线程到集合中去
+            mThreadList.add(thread); // 方便对线程进行管理
+        }
     }
+
+
     /**
-     *  下载进程
+     *  数据下载进程
      */
     class DownloadThread extends Thread{
         private ThreadInfo threadInfo =null;
+        public  boolean isFinished = false; //线程是否执行完毕
 
         public DownloadThread(ThreadInfo threadInfo)
         {
@@ -58,14 +93,11 @@ public class DownloadTask {
         }
 
         public void run(){
-            //向数据库中插入线程信息
-            if(!mDao.isExists(threadInfo.getUrl(),threadInfo.getId())){
-                mDao.insertThread(threadInfo);
-            }
+
             //设置下载位置
             HttpURLConnection conn = null;
             RandomAccessFile raf   = null;
-            InputStream input      = null;
+            InputStream is      = null;
             try {
                 URL url = new URL(threadInfo.getUrl());
                 conn = (HttpURLConnection)url.openConnection();
@@ -83,47 +115,72 @@ public class DownloadTask {
                 //开始下载(conn.getResponseCode()  HttpStatus.SC_PARTIAL_CONTENT 部分内容下载 而不是200 ok)
                 if(conn.getResponseCode() == HttpStatus.SC_PARTIAL_CONTENT){
                     //读取数据
-                    input = conn.getInputStream();
+                    is = conn.getInputStream();
                     byte[] buffer = new byte[1024 * 4 ];
                     int len = -1;
                     long time = System.currentTimeMillis();
-                    while((len = input.read(buffer)) != -1){
+                    while((len = is.read(buffer)) != -1){
+                        //在下载暂停时，保存下载进度
+                        if(isPause){
+                            mDao.updateThread(threadInfo.getUrl(),threadInfo.getId(),threadInfo.getFinished());
+                            return;
+                        }
                         //写入文件
                         raf.write(buffer,0,len);
                         //把下载进度发送广播给Activity
                         mFinished += len;
-                        if(System.currentTimeMillis() - time > 500)
+                        //累加每个线程完成的进度
+                        threadInfo.setFinished( mFileInfo.getFinished() + len);
+                        //每隔1秒刷新UI
+                        if(System.currentTimeMillis() - time > 1000)//减少UI负载
                         {
                             time = System.currentTimeMillis();
-                            intent.putExtra("finished",mFinished * 100/mFileInfo.getLength());
+                            intent.putExtra(FINISHED_KEY,mFinished * 100/mFileInfo.getLength());
+                            intent.putExtra(ID_KEY,mFileInfo.getId());
                             mContext.sendBroadcast(intent);
                         }
-                        //在下载暂停时，保存下载进度
-                        if(isPause){
-                            mDao.updateThread(threadInfo.getUrl(),threadInfo.getId(),mFinished);
-                            return;
-                        }
-                    }
-                    //删除线程信息
-                    mDao.deleteThread(threadInfo.getUrl(),threadInfo.getId());
-                }
 
+                    }
+                    //标识线程执行完毕
+                    isFinished = true;
+                    //检查下载任务是否执行完毕
+                    checkAllThreadsFinished();
+                    is.close(); //输入流
+                }
 
             }  catch (Exception e) {
                 e.printStackTrace();
             }finally {
                 conn.disconnect();
                 try {
-                    input.close(); //输入流
                     raf.close();   //输出流
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
 
             }
+        }
+    }
+    /**
+     * 判断是否所有线程都执行完毕
+     */
+    private synchronized void checkAllThreadsFinished(){
+        boolean allFinished = true;
+        //遍历线程集合,判断线程是否都执行完毕
+        for(DownloadThread thread : mThreadList){
+            if(!thread.isFinished){
+                allFinished = false;
+                break;
+            }
+        }
+        if(allFinished){
+            // 所有线程执行完毕了，就把线程信息删除掉 通过url，跟这个下载文件相关的线程全部删除掉
+            mDao.deleteThread(mFileInfo.getUrl());
 
-            //设置文件写入位置
-            //开始下载
+            //发送广播通知UI下载任务结束
+            Intent intent = new Intent(DownloadService.ACTION_FINISHED);
+            intent.putExtra(DownloadService.FILE_INFO,mFileInfo);
+            mContext.sendBroadcast(intent);
 
         }
     }

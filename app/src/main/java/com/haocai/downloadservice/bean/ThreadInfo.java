@@ -12,17 +12,25 @@ public class ThreadInfo {
     private String url;
     private int start;
     private long end;
-    private long finished;
+    private int finished;
 
     public ThreadInfo(){
         super();
     }
-    public ThreadInfo(int id, String url, int start, long end, long finish) {
+
+    /**
+     v* @param id
+     * @param url
+     * @param start
+     * @param end 每个线程下载的结束位
+     * @param finish 每个线程已下载的结束位
+     */
+    public ThreadInfo(int id, String url, int start, long end, int finish) {
         this.id = id;
         this.url = url;
         this.start = start;
         this.end = end;
-        this.finished = finished;
+        this.finished = finish;
     }
     public int getId() {
         return id;
@@ -56,11 +64,11 @@ public class ThreadInfo {
         this.end = end;
     }
 
-    public long getFinished() {
+    public int getFinished() {
         return finished;
     }
 
-    public void setFinished(long finished) {
+    public void setFinished(int finished) {
         this.finished = finished;
     }
 
