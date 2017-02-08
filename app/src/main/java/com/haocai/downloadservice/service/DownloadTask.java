@@ -2,6 +2,9 @@ package com.haocai.downloadservice.service;
 
 import android.content.Context;
 import android.content.Intent;
+import android.os.Message;
+import android.os.Messenger;
+import android.os.RemoteException;
 
 import com.haocai.downloadservice.bean.FileInfo;
 import com.haocai.downloadservice.bean.ThreadInfo;
@@ -16,6 +19,8 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -37,10 +42,14 @@ public class DownloadTask {
     private List<DownloadThread> mThreadList =null;//线程集合
     public  static ExecutorService mExecutorService = Executors.newCachedThreadPool(); //线程池
 
-    public DownloadTask(Context mContext, FileInfo mFileInfo ,int mThreadCount) {
+    private Timer mTimer = new Timer(); //定时器
+    private Messenger mMessenger = null;
+
+    public DownloadTask(Context mContext, Messenger mMessenger,FileInfo mFileInfo ,int mThreadCount) {
         this.mContext     = mContext;
         this.mFileInfo    = mFileInfo;
         this.mThreadCount = mThreadCount;
+        this.mMessenger   = mMessenger;
         mDao = new ThreadDAOImpl(mContext);
     }
 
@@ -77,6 +86,27 @@ public class DownloadTask {
             //添加线程到集合中去
             mThreadList.add(thread); // 方便对线程进行管理
         }
+        //启动定时任务
+        mTimer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+//                Intent intent = new Intent(DownloadService.ACTION_UPDATE);
+//                intent.putExtra(FINISHED_KEY,mFinished * 100/mFileInfo.getLength());
+//                intent.putExtra(ID_KEY,mFileInfo.getId());
+//                mContext.sendBroadcast(intent);
+
+                Message msg = new Message();
+                msg.what = DownloadService.MSG_UPDATE;
+                msg.arg1 = mFileInfo.getId();
+                msg.arg2 =mFinished * 100/mFileInfo.getLength();
+                try {
+                    mMessenger.send(msg);
+                } catch (RemoteException e) {
+                    e.printStackTrace();
+                }
+
+            }
+        },1000,1000);
     }
 
 
@@ -131,14 +161,14 @@ public class DownloadTask {
                         mFinished += len;
                         //累加每个线程完成的进度
                         threadInfo.setFinished( mFileInfo.getFinished() + len);
-                        //每隔1秒刷新UI
-                        if(System.currentTimeMillis() - time > 1000)//减少UI负载
-                        {
-                            time = System.currentTimeMillis();
-                            intent.putExtra(FINISHED_KEY,mFinished * 100/mFileInfo.getLength());
-                            intent.putExtra(ID_KEY,mFileInfo.getId());
-                            mContext.sendBroadcast(intent);
-                        }
+//                        //每隔1秒刷新UI
+//                        if(System.currentTimeMillis() - time > 1000)//减少UI负载
+//                        {
+//                            time = System.currentTimeMillis();
+//                            intent.putExtra(FINISHED_KEY,mFinished * 100/mFileInfo.getLength());
+//                            intent.putExtra(ID_KEY,mFileInfo.getId());
+//                            mContext.sendBroadcast(intent);
+//                        }
 
                     }
                     //标识线程执行完毕
@@ -174,13 +204,25 @@ public class DownloadTask {
             }
         }
         if(allFinished){
+            mTimer.cancel();
             // 所有线程执行完毕了，就把线程信息删除掉 通过url，跟这个下载文件相关的线程全部删除掉
             mDao.deleteThread(mFileInfo.getUrl());
 
             //发送广播通知UI下载任务结束
-            Intent intent = new Intent(DownloadService.ACTION_FINISHED);
-            intent.putExtra(DownloadService.FILE_INFO,mFileInfo);
-            mContext.sendBroadcast(intent);
+//            Intent intent = new Intent(DownloadService.ACTION_FINISHED);
+//            intent.putExtra(DownloadService.FILE_INFO,mFileInfo);
+//            mContext.sendBroadcast(intent);
+
+
+            Message msg = new Message();
+            msg.what = DownloadService.MSG_FINISHED;
+            msg.obj = mFileInfo;
+            try {
+                mMessenger.send(msg);
+            } catch (RemoteException e) {
+                e.printStackTrace();
+            }
+
 
         }
     }

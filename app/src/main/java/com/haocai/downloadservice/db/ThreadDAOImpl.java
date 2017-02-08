@@ -61,9 +61,9 @@ public class ThreadDAOImpl implements ThreadDAO {
             ThreadInfo threadInfo = new ThreadInfo();
             threadInfo.setId(cursor.getInt(cursor.getColumnIndex("thread_id")));
             threadInfo.setUrl(cursor.getString(cursor.getColumnIndex("url")));
-            threadInfo.setStart(cursor.getInt(cursor.getColumnIndex("start")));
-            threadInfo.setStart(cursor.getInt(cursor.getColumnIndex("end")));
-            threadInfo.setStart(cursor.getInt(cursor.getColumnIndex("finished")));
+            threadInfo.setStart(cursor.getLong(cursor.getColumnIndex("start")));
+            threadInfo.setEnd(cursor.getLong(cursor.getColumnIndex("end")));
+            threadInfo.setFinished(cursor.getLong(cursor.getColumnIndex("finished")));
             list.add(threadInfo);
         }
         cursor.close();
@@ -74,7 +74,6 @@ public class ThreadDAOImpl implements ThreadDAO {
     @Override
     public boolean isExists(String url, int thread_id) {
         SQLiteDatabase db = mHelper.getReadableDatabase();
-
         Cursor cursor = db.rawQuery("select * from thread_info where url = ? and thread_id =?",new String[]{url,thread_id + ""});
 
         boolean exists = cursor.moveToNext();

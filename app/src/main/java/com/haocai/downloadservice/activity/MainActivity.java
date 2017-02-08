@@ -2,11 +2,20 @@ package com.haocai.downloadservice.activity;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Notification;
+import android.app.Service;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.ServiceConnection;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Message;
+import android.os.Messenger;
+import android.os.RemoteException;
 import android.widget.ListView;
 import android.widget.Toast;
 
@@ -15,6 +24,7 @@ import com.haocai.downloadservice.adapter.FileListAdapter;
 import com.haocai.downloadservice.bean.FileInfo;
 import com.haocai.downloadservice.service.DownloadService;
 import com.haocai.downloadservice.service.DownloadTask;
+import com.haocai.downloadservice.utils.NotificationUtil;
 import com.yanzhenjie.permission.AndPermission;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,7 +38,11 @@ public class MainActivity extends Activity {
 
     private List<FileInfo>  mFileList = null;
     private FileListAdapter mAdapter  = null;
-
+    private NotificationUtil mNotificationUtil = null;
+    private Messenger mServiceMessenger = null; //Service中的Messenger
+    /**
+     * @param savedInstanceState
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -37,7 +51,7 @@ public class MainActivity extends Activity {
 
         initData();
         initSetup();
-        initRegister();
+        //initRegister();
 
         // 申请单个权限。
         AndPermission.with(this)
@@ -51,14 +65,76 @@ public class MainActivity extends Activity {
                 .send();
 
 
+        //在Activity
+        mNotificationUtil = new NotificationUtil(this);
 
+        //绑定Service
+        Intent intent = new Intent(this,DownloadService.class);
 
-//        //注册广播接收器
-//        IntentFilter filter = new IntentFilter();
-//        filter.addAction(DownloadService.ACTION_UPDATE);
-//        registerReceiver(mReceiver, filter);
+        bindService(intent,mConnection, Service.BIND_AUTO_CREATE);
     }
 
+    Handler mHandler = new Handler(){
+        @Override
+        public void handleMessage(Message msg) {
+            super.handleMessage(msg);
+            switch (msg.what) {
+                case DownloadService.MSG_UPDATE:
+
+                    //更新进度条
+                    int id = msg.arg1;
+                    int finished = msg.arg2;
+                    mAdapter.updateProgress(id,finished);
+                    //更新通知里的进度
+                    mNotificationUtil.updateNotification(id,finished);
+
+                    break;
+                case DownloadService.MSG_FINISHED:
+
+                    //更新进度为0
+                    FileInfo fileinfo = (FileInfo) msg.obj;
+                    mAdapter.updateProgress(fileinfo.getId(),0);
+                    Toast.makeText(MainActivity.this,fileinfo.getFileName()+"下载完毕",Toast.LENGTH_SHORT).show();
+                    //取消通知
+                    mNotificationUtil.cancelNotification(fileinfo.getId());
+
+                    break;
+                case DownloadService.MSG_START:
+
+                    mNotificationUtil.showNotification((FileInfo) msg.obj);
+                    break;
+            }
+        }
+    };
+    private ServiceConnection mConnection = new ServiceConnection() {
+    @Override
+    public void onServiceConnected(ComponentName name, IBinder service) {
+
+        //获得Service中的Messenger
+        mServiceMessenger = new Messenger(service);
+        //设置适配器中的Messenger
+        mAdapter.setMessenger(mServiceMessenger);
+        //创建Activity中的Messenger
+        Messenger messenger =new Messenger(mHandler);
+        //创建消息
+        Message msg  = new Message();
+        msg.what  = DownloadService.MSG_BIND;
+        msg.replyTo = messenger;
+        //5.使用Service的Messenger发送信息给Service的Handler，信息包括Activity的Messenger
+        try {
+            mServiceMessenger.send(msg);
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+
+
+    }
+
+    @Override
+    public void onServiceDisconnected(ComponentName name) {
+
+    }
+};
     private void initData() {
         //创建文件集合
         mFileList = new ArrayList<>();
@@ -84,40 +160,47 @@ public class MainActivity extends Activity {
         mAdapter = new FileListAdapter(this,mFileList);
         lvFile.setAdapter(mAdapter);
     }
-    private void initRegister() {
-        //注册广播接收器
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(DownloadService.ACTION_UPDATE);
-        filter.addAction(DownloadService.ACTION_FINISHED);
-        registerReceiver(mReceiver, filter);
+//    private void initRegister() {
+//        //注册广播接收器
+//        IntentFilter filter = new IntentFilter();
+//        filter.addAction(DownloadService.ACTION_UPDATE);
+//        filter.addAction(DownloadService.ACTION_FINISHED);
+//        filter.addAction(DownloadService.ACTION_START);
+//        registerReceiver(mReceiver, filter);
+//    }
 
-    }
-
-
-    /**
-     * 更新UI的广播接收器
-     */
-    BroadcastReceiver mReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-
-            if (DownloadService.ACTION_UPDATE.equals(intent.getAction())) {
-                //更新进度条
-                int id = intent.getIntExtra(DownloadTask.ID_KEY, 0);
-                int finished = intent.getIntExtra(DownloadTask.FINISHED_KEY, 0);
-                mAdapter.updateProgress(id,finished);
-            }else if(DownloadService.ACTION_FINISHED.equals(intent.getAction())){
-                //更新进度为0
-                FileInfo fileinfo = (FileInfo) intent.getSerializableExtra(DownloadService.FILE_INFO);
-                mAdapter.updateProgress(fileinfo.getId(),0);
-                Toast.makeText(MainActivity.this,fileinfo.getFileName()+"下载完毕",Toast.LENGTH_SHORT).show();
-            }
-        }
-    };
+//    /**
+//     * 更新UI的广播接收器
+//     */
+//    BroadcastReceiver mReceiver = new BroadcastReceiver() {
+//        @Override
+//        public void onReceive(Context context, Intent intent) {
+//
+//            if (DownloadService.ACTION_UPDATE.equals(intent.getAction())) {
+//                //更新进度条
+//                int id = intent.getIntExtra(DownloadTask.ID_KEY, 0);
+//                int finished = intent.getIntExtra(DownloadTask.FINISHED_KEY, 0);
+//                mAdapter.updateProgress(id,finished);
+//                //更新通知里的进度
+//                mNotificationUtil.updateNotification(id,finished);
+//            }else if(DownloadService.ACTION_FINISHED.equals(intent.getAction())){
+//                //更新进度为0
+//                FileInfo fileinfo = (FileInfo) intent.getSerializableExtra(DownloadService.FILE_INFO);
+//                mAdapter.updateProgress(fileinfo.getId(),0);
+//                Toast.makeText(MainActivity.this,fileinfo.getFileName()+"下载完毕",Toast.LENGTH_SHORT).show();
+//                //取消通知
+//                mNotificationUtil.cancelNotification(fileinfo.getId());
+//            }else if(DownloadService.ACTION_START.equals(intent.getAction())){
+//                Toast.makeText(MainActivity.this,"显示通知",Toast.LENGTH_SHORT).show();
+//                //显示通知
+//                mNotificationUtil.showNotification((FileInfo) intent.getSerializableExtra(DownloadService.FILE_INFO));
+//            }
+//        }
+//    };
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        unregisterReceiver(mReceiver);
+      //  unregisterReceiver(mReceiver);
     }
 }
